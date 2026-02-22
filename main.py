@@ -1,26 +1,36 @@
 import requests
+import time
+
+# =============================
+# CONFIG
+# =============================
 
 TOKEN = "8290039493:AAHz27Otu5LvTVqKCAvFHoS55Oj2wM7quEY"
 CHAT_ID = "8207227866"
 
 SEARCH_API = "https://api.dexscreener.com/latest/dex/search?q="
 
-# =========================
+# =============================
 # Telegram Sender
-# =========================
+# =============================
 
 def send_msg(text):
-    url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-    requests.post(url, json={
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "HTML"
-    })
+    try:
+        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
-# =========================
-# تحليل شبه احترافي
-# =========================
+        requests.post(url, json={
+            "chat_id": CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML"
+        })
+
+    except Exception as e:
+        print("Send Error:", e)
+
+# =============================
+# تحليل العملة
+# =============================
 
 def analyze_crypto(query):
 
@@ -28,8 +38,8 @@ def analyze_crypto(query):
 
         data = requests.get(SEARCH_API + query, timeout=15).json()
 
-        if "pairs" not in data:
-            return "❌ لا توجد بيانات"
+        if "pairs" not in data or len(data["pairs"]) == 0:
+            return "❌ لم يتم العثور على العملة"
 
         pair = data["pairs"][0]
 
@@ -38,93 +48,93 @@ def analyze_crypto(query):
         liquidity = float(pair.get("liquidity", {}).get("usd", 0))
         volume24 = float(pair.get("volume", {}).get("h24", 0))
 
-        # RSI تقديري بسيط (ليس حقيقي 100%)
-        rsi_proxy = 50
+        score = 5
 
-        if volume24 > 150000:
-            rsi_proxy += 10
+        if liquidity > 60000:
+            score += 2
 
-        if liquidity > 80000:
-            rsi_proxy += 5
+        if volume24 > 100000:
+            score += 2
 
-        risk = "🟡 متوسط"
+        recommendation = "⚠️ لا ينصح بالدخول"
 
-        recommendation_score = rsi_proxy / 10
+        if score >= 7:
+            recommendation = "🟡 فرصة جيدة"
 
-        if recommendation_score > 8:
-            risk = "🚀 فرصة قوية"
-
-        elif recommendation_score < 4:
-            risk = "⚠️ خطورة عالية"
+        if score >= 9:
+            recommendation = "🚀 فرصة قوية"
 
         entry = price
-        target1 = round(price * 1.08, 8)
-        target2 = round(price * 1.15, 8)
+        target1 = round(price * 1.1, 8)
+        target2 = round(price * 1.2, 8)
         stop = round(price * 0.94, 8)
 
         return f"""
-🤖 Ultra Smart Advisor
+🤖 Smart Crypto Advisor
 
 💎 العملة: {symbol}
-
 💰 السعر: {price}
 
 📊 السيولة: {liquidity}
-📈 الفوليوم: {volume24}
+📈 الحجم 24h: {volume24}
 
-⭐ نسبة التوصية: {int(recommendation_score*10)}%
-
-⚠️ نسبة الخطورة: {risk}
+⭐ التقييم: {recommendation}
 
 🎯 الدخول: {entry}
 🎯 الهدف1: {target1}
 🎯 الهدف2: {target2}
-🛑 وقف الخسارة: {stop}
+🛑 الستوب: {stop}
 
-📌 ملاحظة:
-تحليل احتمالي فقط وليس ضمان ربح
+⚠️ التحليل احتمالي فقط
 """
 
-    except:
-        return "⚠️ خطأ في التحليل"
+    except Exception as e:
+        return f"⚠️ خطأ في التحليل: {e}"
 
-# =========================
-# قراءة أوامر Telegram
-# =========================
+# =============================
+# Bot Runner (الحل الجذري الثالث)
+# =============================
 
 def run_bot():
 
-    print("🚀 Ultra AI Bot Running")
+    print("BOT STARTED")
 
-    offset = None
+    offset = 0
 
     while True:
 
-        updates = requests.get(
-            f"https://api.telegram.org/bot{TOKEN}/getUpdates",
-            params={"offset": offset}
-        ).json()
+        try:
 
-        if "result" in updates:
+            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={offset}"
+            response = requests.get(url, timeout=10).json()
 
-            for update in updates["result"]:
+            if "result" in response:
 
-                offset = update["update_id"] + 1
+                for update in response["result"]:
 
-                if "message" not in update:
-                    continue
+                    offset = update["update_id"] + 1
 
-                text = update["message"]["text"]
+                    if "message" not in update:
+                        continue
 
-                if text.startswith("/analyze"):
+                    text = update["message"]["text"]
 
-                    query = text.replace("/analyze", "").strip()
+                    if text.startswith("/analyze"):
 
-                    if query:
+                        query = text.replace("/analyze", "").strip()
+
                         result = analyze_crypto(query)
+
                         send_msg(result)
 
+        except Exception as e:
+            print("Error:", e)
+
         time.sleep(5)
+
+# =============================
+# التشغيل
+# =============================
 
 if __name__ == "__main__":
     run_bot()
