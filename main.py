@@ -1,21 +1,20 @@
 import requests
 import time
 
-# =============================
+# ===========================
 # CONFIG
-# =============================
+# ===========================
 
 TOKEN = "8290039493:AAHz27Otu5LvTVqKCAvFHoS55Oj2wM7quEY"
 CHAT_ID = "8207227866"
 
 SEARCH_API = "https://api.dexscreener.com/latest/dex/search?q="
 
-# =============================
+# ===========================
 # Telegram Sender
-# =============================
+# ===========================
 
-def send_msg(text):
-
+def send_message(text):
     try:
         url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
 
@@ -23,20 +22,24 @@ def send_msg(text):
             "chat_id": CHAT_ID,
             "text": text,
             "parse_mode": "HTML"
-        })
+        }, timeout=5)
 
     except Exception as e:
-        print("Send Error:", e)
+        print("Send error:", e)
 
-# =============================
+# ===========================
 # تحليل العملة
-# =============================
+# ===========================
 
 def analyze_crypto(query):
 
     try:
 
-        data = requests.get(SEARCH_API + query, timeout=15).json()
+        data = requests.get(
+            SEARCH_API + query,
+            timeout=5,
+            headers={"Cache-Control": "no-cache"}
+        ).json()
 
         if "pairs" not in data or len(data["pairs"]) == 0:
             return "❌ لم يتم العثور على العملة"
@@ -48,6 +51,7 @@ def analyze_crypto(query):
         liquidity = float(pair.get("liquidity", {}).get("usd", 0))
         volume24 = float(pair.get("volume", {}).get("h24", 0))
 
+        # تقييم الذكاء البسيط
         score = 5
 
         if liquidity > 60000:
@@ -59,10 +63,12 @@ def analyze_crypto(query):
         recommendation = "⚠️ لا ينصح بالدخول"
 
         if score >= 7:
-            recommendation = "🟡 فرصة جيدة"
+            recommendation = "🟡 فرصة متوسطة"
 
         if score >= 9:
             recommendation = "🚀 فرصة قوية"
+
+        price = round(price, 8)
 
         entry = price
         target1 = round(price * 1.1, 8)
@@ -85,19 +91,19 @@ def analyze_crypto(query):
 🎯 الهدف2: {target2}
 🛑 الستوب: {stop}
 
-⚠️ التحليل احتمالي فقط
+⚠️ تحليل احتمالي فقط
 """
 
     except Exception as e:
-        return f"⚠️ خطأ في التحليل: {e}"
+        return f"⚠️ خطأ في التحليل"
 
-# =============================
-# Bot Runner (الحل الجذري الثالث)
-# =============================
+# ===========================
+# تشغيل البوت
+# ===========================
 
 def run_bot():
 
-    print("BOT STARTED")
+    print("BOT RUNNING")
 
     offset = 0
 
@@ -106,7 +112,8 @@ def run_bot():
         try:
 
             url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={offset}"
-            response = requests.get(url, timeout=10).json()
+
+            response = requests.get(url, timeout=5).json()
 
             if "result" in response:
 
@@ -125,16 +132,14 @@ def run_bot():
 
                         result = analyze_crypto(query)
 
-                        send_msg(result)
+                        send_message(result)
 
         except Exception as e:
             print("Error:", e)
 
-        time.sleep(5)
+        time.sleep(2)
 
-# =============================
-# التشغيل
-# =============================
+# ===========================
 
 if __name__ == "__main__":
     run_bot()
