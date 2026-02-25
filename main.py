@@ -1,145 +1,129 @@
-import requests
 import time
+import requests
+import pandas as pd
+import pandas_ta as ta
+from binance.client import Client
 
-# ===========================
-# CONFIG
-# ===========================
-
-TOKEN = "8290039493:AAHz27Otu5LvTVqKCAvFHoS55Oj2wM7quEY"
+# ================= CONFIG (النسخة النهائية - Speed Mode) =================
+BOT_TOKEN = "8290039493:AAHz27Otu5LvTVqKCAvFHoS55Oj2wM7quEY"
 CHAT_ID = "8207227866"
 
-SEARCH_API = "https://api.dexscreener.com/latest/dex/search?q="
+client = Client()
 
-# ===========================
-# Telegram Sender
-# ===========================
+# إعدادات السرعة والدقة
+EMA_FAST, EMA_SLOW = 50, 200
+COMPRESSION_THRESHOLD = 0.018   # سرعة التقاط التجميع
+VOL_EXPLOSION_STRONG = 3.2
+VOL_EXPLOSION_WEAK = 2.2
+WHALE_PRESSURE_MIN = 2.0
+WATCHLIST_CONFIRM_CANDLES = 1.5 
+MAX_WATCHLIST_AGE = 3600
 
-def send_message(text):
+sent_signals = {}
+watchlist = {}
+# =========================================================================
+
+def get_market_data(symbol):
     try:
-        url = f"https://api.telegram.org/bot{TOKEN}/sendMessage"
+        klines = client.get_klines(symbol=symbol, interval=Client.KLINE_INTERVAL_5MINUTE, limit=220)
+        df = pd.DataFrame(klines, columns=['time','open','high','low','close','volume','ct','qv','nt','tb','tq','i'])
+        df[['open','high','low','close','volume']] = df[['open','high','low','close','volume']].apply(pd.to_numeric)
+        return df
+    except Exception: return None
 
-        requests.post(url, json={
-            "chat_id": CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML"
-        }, timeout=5)
-
-    except Exception as e:
-        print("Send error:", e)
-
-# ===========================
-# تحليل العملة
-# ===========================
-
-def analyze_crypto(query):
-
+def check_whale_pressure(symbol):
     try:
+        depth = client.get_order_book(symbol=symbol, limit=20)
+        bid_vol = sum(float(b[1]) for b in depth['bids'])
+        ask_vol = sum(float(a[1]) for a in depth['asks'])
+        return round(bid_vol / ask_vol, 2) if ask_vol > 0 else 1
+    except Exception: return 1
 
-        data = requests.get(
-            SEARCH_API + query,
-            timeout=5,
-            headers={"Cache-Control": "no-cache"}
-        ).json()
+def analyze(symbol):
+    df = get_market_data(symbol)
+    if df is None or len(df) < 200: return None
 
-        if "pairs" not in data or len(data["pairs"]) == 0:
-            return "❌ لم يتم العثور على العملة"
+    df["EMA_F"] = ta.ema(df["close"], length=EMA_FAST)
+    df["EMA_S"] = ta.ema(df["close"], length=EMA_SLOW)
+    df["ATR"] = ta.atr(df["high"], df["low"], df["close"], length=14)
 
-        pair = data["pairs"][0]
+    last = df.iloc[-1]
+    recent_20 = df.tail(20)
+    recent_high, recent_low = recent_20["high"].max(), recent_20["low"].min()
 
-        symbol = pair.get("baseToken", {}).get("symbol")
-        price = float(pair.get("priceUsd", 0))
-        liquidity = float(pair.get("liquidity", {}).get("usd", 0))
-        volume24 = float(pair.get("volume", {}).get("h24", 0))
+    if recent_low <= 0: return None
+    range_pct = (recent_high - recent_low) / recent_low
+    avg_vol = recent_20["volume"].mean()
 
-        # تقييم الذكاء البسيط
-        score = 5
+    # 1. رصد التجميع
+    if range_pct < COMPRESSION_THRESHOLD and last["volume"] < avg_vol:
+        watchlist[symbol] = {"break_price": recent_high, "added_at": time.time(), "confirmed": 0}
+        return None
 
-        if liquidity > 60000:
-            score += 2
+    # 2. رصد الانفجار
+    if symbol in watchlist:
+        if time.time() - watchlist[symbol]["added_at"] > MAX_WATCHLIST_AGE:
+            del watchlist[symbol]; return None
 
-        if volume24 > 100000:
-            score += 2
+        breakout_price = watchlist[symbol]["break_price"]
+        volume_ratio = last["volume"] / avg_vol if avg_vol > 0 else 1
+        whale_pressure = check_whale_pressure(symbol)
 
-        recommendation = "⚠️ لا ينصح بالدخول"
+        if last["close"] > breakout_price:
+            watchlist[symbol]["confirmed"] += 1 if volume_ratio > VOL_EXPLOSION_STRONG else 0.5
 
-        if score >= 7:
-            recommendation = "🟡 فرصة متوسطة"
+        if (last["EMA_F"] > last["EMA_S"] and 
+            whale_pressure > WHALE_PRESSURE_MIN and 
+            watchlist[symbol]["confirmed"] >= WATCHLIST_CONFIRM_CANDLES):
+            
+            res = {"price": last["close"], "atr": last["ATR"], "vol_ratio": round(volume_ratio, 1), "whale": whale_pressure}
+            del watchlist[symbol]
+            return res
+    return None
 
-        if score >= 9:
-            recommendation = "🚀 فرصة قوية"
+def send_signal(symbol, data):
+    entry = data["price"]
+    sl, tp = round(entry - data["atr"] * 1.4, 6), round(entry + data["atr"] * 2.8, 6)
+    
+    msg = f"""
+⚡ <b>ShinobiFlow Speed Mode</b> ⚡
 
-        price = round(price, 8)
+💎 <b>الزوج:</b> #{symbol}
+💰 <b>دخول:</b> <code>{entry}</code>
 
-        entry = price
-        target1 = round(price * 1.1, 8)
-        target2 = round(price * 1.2, 8)
-        stop = round(price * 0.94, 8)
+📊 <b>انفجار السيولة:</b> {data['vol_ratio']}x
+🐋 <b>ضغط الحيتان:</b> {data['whale']}x
 
-        return f"""
-🤖 Smart Crypto Advisor
+🎯 <b>الهدف:</b> <code>{tp}</code>
+🛑 <b>الوقف:</b> <code>{sl}</code>
 
-💎 العملة: {symbol}
-💰 السعر: {price}
-
-📊 السيولة: {liquidity}
-📈 الحجم 24h: {volume24}
-
-⭐ التقييم: {recommendation}
-
-🎯 الدخول: {entry}
-🎯 الهدف1: {target1}
-🎯 الهدف2: {target2}
-🛑 الستوب: {stop}
-
-⚠️ تحليل احتمالي فقط
+⚠️ <i>نظام الالتقاط السريع مفعل</i>
 """
+    try:
+        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                      json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=10)
+    except: pass
 
-    except Exception as e:
-        return f"⚠️ خطأ في التحليل"
-
-# ===========================
-# تشغيل البوت
-# ===========================
-
-def run_bot():
-
-    print("BOT RUNNING")
-
-    offset = 0
-
+def run():
+    print("🔥 ShinobiFlow Final Speed Mode is Active...")
     while True:
-
         try:
+            tickers = client.get_ticker()
+            top_symbols = sorted([t for t in tickers if t["symbol"].endswith("USDT")],
+                                key=lambda x: float(x["quoteVolume"]), reverse=True)[:50]
 
-            url = f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset={offset}"
-
-            response = requests.get(url, timeout=5).json()
-
-            if "result" in response:
-
-                for update in response["result"]:
-
-                    offset = update["update_id"] + 1
-
-                    if "message" not in update:
-                        continue
-
-                    text = update["message"]["text"]
-
-                    if text.startswith("/analyze"):
-
-                        query = text.replace("/analyze", "").strip()
-
-                        result = analyze_crypto(query)
-
-                        send_message(result)
-
+            for t in top_symbols:
+                symbol = t["symbol"]
+                if symbol in sent_signals and time.time() - sent_signals[symbol] < 14400: continue
+                
+                signal = analyze(symbol)
+                if isinstance(signal, dict):
+                    send_signal(symbol, signal)
+                    sent_signals[symbol] = time.time()
+                time.sleep(0.2)
+            time.sleep(20)
         except Exception as e:
-            print("Error:", e)
-
-        time.sleep(2)
-
-# ===========================
+            print(f"Connection Error: {e}"); time.sleep(10)
 
 if __name__ == "__main__":
-    run_bot()
+    run()
