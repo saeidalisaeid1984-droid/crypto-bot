@@ -4,15 +4,16 @@ import pandas as pd
 import pandas_ta as ta
 from binance.client import Client
 
-# ================= CONFIG (النسخة النهائية - Speed Mode) =================
+# ================= CONFIG (Mego Crypto Bot) =================
 BOT_TOKEN = "8290039493:AAHz27Otu5LvTVqKCAvFHoS55Oj2wM7quEY"
 CHAT_ID = "8207227866"
+BOT_NAME = "Mego Crypto"
 
 client = Client()
 
-# إعدادات السرعة والدقة
+# إعدادات الاستراتيجية الاحترافية
 EMA_FAST, EMA_SLOW = 50, 200
-COMPRESSION_THRESHOLD = 0.018   # سرعة التقاط التجميع
+COMPRESSION_THRESHOLD = 0.018   
 VOL_EXPLOSION_STRONG = 3.2
 VOL_EXPLOSION_WEAK = 2.2
 WHALE_PRESSURE_MIN = 2.0
@@ -21,7 +22,15 @@ MAX_WATCHLIST_AGE = 3600
 
 sent_signals = {}
 watchlist = {}
-# =========================================================================
+# ============================================================
+
+def send_telegram_msg(text):
+    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
+    payload = {"chat_id": CHAT_ID, "text": text, "parse_mode": "HTML"}
+    try:
+        requests.post(url, json=payload, timeout=10)
+    except:
+        pass
 
 def get_market_data(symbol):
     try:
@@ -29,7 +38,7 @@ def get_market_data(symbol):
         df = pd.DataFrame(klines, columns=['time','open','high','low','close','volume','ct','qv','nt','tb','tq','i'])
         df[['open','high','low','close','volume']] = df[['open','high','low','close','volume']].apply(pd.to_numeric)
         return df
-    except Exception: return None
+    except: return None
 
 def check_whale_pressure(symbol):
     try:
@@ -37,7 +46,7 @@ def check_whale_pressure(symbol):
         bid_vol = sum(float(b[1]) for b in depth['bids'])
         ask_vol = sum(float(a[1]) for a in depth['asks'])
         return round(bid_vol / ask_vol, 2) if ask_vol > 0 else 1
-    except Exception: return 1
+    except: return 1
 
 def analyze(symbol):
     df = get_market_data(symbol)
@@ -55,12 +64,10 @@ def analyze(symbol):
     range_pct = (recent_high - recent_low) / recent_low
     avg_vol = recent_20["volume"].mean()
 
-    # 1. رصد التجميع
     if range_pct < COMPRESSION_THRESHOLD and last["volume"] < avg_vol:
         watchlist[symbol] = {"break_price": recent_high, "added_at": time.time(), "confirmed": 0}
         return None
 
-    # 2. رصد الانفجار
     if symbol in watchlist:
         if time.time() - watchlist[symbol]["added_at"] > MAX_WATCHLIST_AGE:
             del watchlist[symbol]; return None
@@ -86,26 +93,27 @@ def send_signal(symbol, data):
     sl, tp = round(entry - data["atr"] * 1.4, 6), round(entry + data["atr"] * 2.8, 6)
     
     msg = f"""
-⚡ <b>ShinobiFlow Speed Mode</b> ⚡
+🚀 <b>{BOT_NAME} Signal</b> 🚀
 
 💎 <b>الزوج:</b> #{symbol}
-💰 <b>دخول:</b> <code>{entry}</code>
+💰 <b>سعر الدخول:</b> <code>{entry}</code>
 
-📊 <b>انفجار السيولة:</b> {data['vol_ratio']}x
+📊 <b>قوة الانفجار:</b> {data['vol_ratio']}x
 🐋 <b>ضغط الحيتان:</b> {data['whale']}x
 
-🎯 <b>الهدف:</b> <code>{tp}</code>
-🛑 <b>الوقف:</b> <code>{sl}</code>
+🎯 <b>الهدف (TP):</b> <code>{tp}</code>
+🛑 <b>الوقف (SL):</b> <code>{sl}</code>
 
-⚠️ <i>نظام الالتقاط السريع مفعل</i>
+⚡ <i>تم الالتقاط بواسطة نظام Mego السريع</i>
 """
-    try:
-        requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
-                      json={"chat_id": CHAT_ID, "text": msg, "parse_mode": "HTML"}, timeout=10)
-    except: pass
+    send_telegram_msg(msg)
 
 def run():
-    print("🔥 ShinobiFlow Final Speed Mode is Active...")
+    # رسالة الترحيب والتأكد من العمل
+    welcome_text = f"✅ <b>تم تشغيل بوت {BOT_NAME} بنجاح!</b>\n\n🔍 جاري فحص سوق Binance الآن لاقتناص أقوى الفرص...\n📊 استراتيجية: Speed Breakout + Whale Pressure"
+    print(f"🔥 {BOT_NAME} is Online...")
+    send_telegram_msg(welcome_text)
+
     while True:
         try:
             tickers = client.get_ticker()
@@ -123,7 +131,7 @@ def run():
                 time.sleep(0.2)
             time.sleep(20)
         except Exception as e:
-            print(f"Connection Error: {e}"); time.sleep(10)
+            print(f"Error: {e}"); time.sleep(10)
 
 if __name__ == "__main__":
     run()
